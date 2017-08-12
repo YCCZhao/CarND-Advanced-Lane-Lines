@@ -46,11 +46,12 @@ def calibrate_cam():
     pickle.dump(dist_pickle, open('./camera_cal/dist_pickle.p', 'wb'))
     return dist_pickle
 
-def undistortion(img):
-    dist_pickle = pickle.load(open('./camera_cal/dist_pickle.p', 'rb'))
-    dist = dist_pickle['dist']
-    mtx = dist_pickle['mtx'] 
-    
+
+dist_pickle = pickle.load(open('./camera_cal/dist_pickle.p', 'rb'))
+dist = dist_pickle['dist']
+mtx = dist_pickle['mtx'] 
+
+def undistortion(dist, mtx, img):   
     dst = cv2.undistort(img, mtx, dist, None, mtx)
     return dst
 
@@ -125,7 +126,7 @@ def edge_detection(img):
     s_binary = np.zeros_like(s)
     s_binary[(s >= s_thresh_min) & (s <= s_thresh_max)] = 1
      
-    combined1 = np.zeros_like(gray)
+    combined1 = np.zeros_like(s)
     combined1[((l_binary == 1) |(s_binary == 1))] = 1
     
     ksize = 9
@@ -142,101 +143,125 @@ def edge_detection(img):
     
     return combined
 
+class Line():
+    def __init__(self):
+        self.n = 5
+        self.min_points = 500
+        #polynomial coefficients for the most recent fit
+        self.current_fit = None
+        self.current_x = None  
+        self.current_y = None  
+        #difference in fit coefficients between last and new fits
+        self.diffs = np.array([0,0,0], dtype='float') 
+        #Last n fits of the line
+        self.recent_fitted = []
+        self.good_fitted = []
+        #polynomial coefficients averaged over the last n iterations
+        self.best_fit = None
+        # was the line detected in the last iteration?
+        self.detected = False  
+        #radius of curvature of the line in some units
+        self.radius_of_curvature = None 
+        #distance in meters of vehicle center from the line
+        self.line_base_pos = None
+         
+    def set_current_poly_fit(self):
+        if len(self.current_x) >= self.min_points:
+            self.current_fit = np.polyfit(self.current_y, self.current_x, 2)   
+        else:
+            self.current_fit = None   
+            
+        self.recent_fitted.append(self.current_fit)
+        self.set_best_fit()
+    def set_best_fit(self):
+        if len(self.recent_fitted) < self.n:
+            self.recent_fitted.append(self.current_fit)
+            if self.current_fit is not None:
+                self.good_fitted.append(self.current_fit)
+        else:
+            self.recent_fitted[1:].append(self.current_fit)
+            if self.current_fit is not None:
+                self.good_fitted[1:].append(self.current_fit)
+        self.best_fit = np.mean(np.array(self.good_fitted), axis=0)
 
-def lane_mask(img):
+
+            
+def lane_mask(img,dist=dist,mtx=mtx):
+    def slide_windows(x_base, lane_inds=[]):
+        x_current = x_base
+        for window in range(nwindows):
+            win_y_low = binary_warped.shape[0] - (window+1)*window_height
+            win_y_high = binary_warped.shape[0] - window*window_height
+            win_x_low = x_current - margin
+            win_x_high = x_current + margin
+            good_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_x_low) & (nonzerox < win_x_high)).nonzero()[0]
+            lane_inds.append(good_inds)
+            if len(good_inds) > minpix:
+                x_current = np.int(np.mean(nonzerox[good_inds]))
+        return np.concatenate(lane_inds)
+    
+    img = undistortion(dist, mtx, img)
     edges = edge_detection(img)
     binary_warped = perspective_trans(edges)
-
-    # Take a histogram of the bottom half of the image
-    histogram = np.sum(binary_warped[2*binary_warped.shape[0]//3:,:], axis=0)
-    # Create an output image to draw on and  visualize the result
-    #out_img = np.dstack((binary_warped, binary_warped, binary_warped))*255
-    # Find the peak of the left and right halves of the histogram
-    # These will be the starting point for the left and right lines
-    midpoint = np.int(histogram.shape[0]//2)
-    leftx_base = np.argmax(histogram[:midpoint])
-    rightx_base = np.argmax(histogram[midpoint:]) + midpoint
-    
+    nonzero = binary_warped.nonzero()
+    nonzeroy = np.array(nonzero[0])
+    nonzerox = np.array(nonzero[1])
+       
     # Choose the number of sliding windows
     nwindows = 9
     # Set height of windows
     window_height = np.int(binary_warped.shape[0]//nwindows)
-    # Identify the x and y positions of all nonzero pixels in the image
-    nonzero = binary_warped.nonzero()
-    nonzeroy = np.array(nonzero[0])
-    nonzerox = np.array(nonzero[1])
-    # Current positions to be updated for each window
-    leftx_current = leftx_base
-    rightx_current = rightx_base
+    midpoint = np.int(img.shape[0]//2)
     # Set the width of the windows +/- margin
-    margin = 80
+    margin = 100
     # Set minimum number of pixels found to recenter window
-    minpix = 50
+    minpix = 50    # Identify the x and y positions of all nonzero pixels in the image
+
+
     # Create empty lists to receive left and right lane pixel indices
     left_lane_inds = []
     right_lane_inds = []
     
-    # Step through the windows one by one
-    for window in range(nwindows):
-        # Identify window boundaries in x and y (and right and left)
-        win_y_low = binary_warped.shape[0] - (window+1)*window_height
-        win_y_high = binary_warped.shape[0] - window*window_height
-        win_xleft_low = leftx_current - margin
-        win_xleft_high = leftx_current + margin
-        win_xright_low = rightx_current - margin
-        win_xright_high = rightx_current + margin
-        # Draw the windows on the visualization image
-        #cv2.rectangle(out_img,(win_xleft_low,win_y_low),(win_xleft_high,win_y_high),(0,255,0), 2) 
-        #cv2.rectangle(out_img,(win_xright_low,win_y_low),(win_xright_high,win_y_high),(0,255,0), 2) 
-        # Identify the nonzero pixels in x and y within the window
-        good_left_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xleft_low) & (nonzerox < win_xleft_high)).nonzero()[0]
-        good_right_inds = ((nonzeroy >= win_y_low) & (nonzeroy < win_y_high) & (nonzerox >= win_xright_low) & (nonzerox < win_xright_high)).nonzero()[0]
-        # Append these indices to the lists
-        left_lane_inds.append(good_left_inds)
-        right_lane_inds.append(good_right_inds)
-        # If you found > minpix pixels, recenter next window on their mean position
-        if len(good_left_inds) > minpix:
-            leftx_current = np.int(np.mean(nonzerox[good_left_inds]))
-        if len(good_right_inds) > minpix:        
-            rightx_current = np.int(np.mean(nonzerox[good_right_inds]))
+    if (rightLine.current_fit is None) or (leftLine.current_fit is None):
+        histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
     
-    # Concatenate the arrays of indices
-    left_lane_inds = np.concatenate(left_lane_inds)
-    right_lane_inds = np.concatenate(right_lane_inds)
-    
+    if (rightLine.current_fit is not None):
+        right_lane_inds = ((nonzerox > (rightLine.current_fit[0]*(nonzeroy**2) + rightLine.current_fit[1]*nonzeroy + rightLine.current_fit[2] - margin)) \
+                           & (nonzerox < (rightLine.current_fit[0]*(nonzeroy**2) + rightLine.current_fit[1]*nonzeroy + rightLine.current_fit[2] + margin)))  
+    else:
+        rightx_base = np.argmax(histogram[midpoint:]) + midpoint
+        right_lane_inds = slide_windows(rightx_base, right_lane_inds)
+
+    if (leftLine.current_fit is not None): 
+        left_lane_inds = ((nonzerox > (leftLine.current_fit[0]*(nonzeroy**2) + leftLine.current_fit[1]*nonzeroy + leftLine.current_fit[2] - margin)) \
+                          & (nonzerox < (leftLine.current_fit[0]*(nonzeroy**2) + leftLine.current_fit[1]*nonzeroy + leftLine.current_fit[2] + margin))) 
+    else: 
+        leftx_base = np.argmax(histogram[:midpoint])
+        left_lane_inds = slide_windows(leftx_base, left_lane_inds)
+           
     # Extract left and right line pixel positions
-    leftx = nonzerox[left_lane_inds]
-    lefty = nonzeroy[left_lane_inds] 
-    rightx = nonzerox[right_lane_inds]
-    righty = nonzeroy[right_lane_inds] 
-    
+    leftLine.current_x = nonzerox[left_lane_inds]
+    leftLine.current_y = nonzeroy[left_lane_inds] 
+    rightLine.current_x = nonzerox[right_lane_inds]
+    rightLine.current_y = nonzeroy[right_lane_inds] 
     # Fit a second order polynomial to each
-    left_fit = np.polyfit(lefty, leftx, 2)
-    right_fit = np.polyfit(righty, rightx, 2)        
-    
-    # Color in left and right line pixels
-    #out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
-    #out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
-    
+    leftLine.set_current_poly_fit()
+    rightLine.set_current_poly_fit()
+
+    if leftLine.current_fit is None and rightLine.current_fit is not None:
+        leftLine.current_fit = rightLine.current_fit
+        leftLine.current_fit[2] -= 800
+    if rightLine.current_fit is None and leftLine.current_fit is not None:
+        rightLine.current_fit = leftLine.current_fit
+        rightLine.current_fit[2] += 800
+        
+    leftLine.set_best_fit()
+    rightLine.set_best_fit()       
+       
     ploty = np.linspace(0, binary_warped.shape[0]-1, binary_warped.shape[0] )
-    left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
-    right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
-    
-    # Create an image to draw on and an image to show the selection window
-    #window_img = np.zeros_like(binary_warped)
-    # Generate a polygon to illustrate the search window area
-    # And recast the x and y points into usable format for cv2.fillPoly()
-    #left_line_window1 = np.array([np.transpose(np.vstack([left_fitx-margin, ploty]))])
-    #left_line_window2 = np.array([np.flipud(np.transpose(np.vstack([left_fitx+margin, ploty])))])
-    #left_line_pts = np.hstack((left_line_window1, left_line_window2))
-    #right_line_window1 = np.array([np.transpose(np.vstack([right_fitx-margin, ploty]))])
-    #right_line_window2 = np.array([np.flipud(np.transpose(np.vstack([right_fitx+margin, ploty])))])
-    #right_line_pts = np.hstack((right_line_window1, right_line_window2))
-    
-    #cv2.fillPoly(window_img, np.int_([left_line_pts]), (0,255, 0))
-    #cv2.fillPoly(window_img, np.int_([right_line_pts]), (0,255, 0))
-    #result = cv2.addWeighted(out_img, 1, window_img, 0.3, 0)
-    
+    left_fitx = leftLine.best_fit[0]*ploty**2 + leftLine.best_fit[1]*ploty + leftLine.best_fit[2]
+    right_fitx = rightLine.best_fit[0]*ploty**2 + rightLine.best_fit[1]*ploty + rightLine.best_fit[2]
+       
     warp_zero = np.zeros_like(binary_warped).astype(np.uint8)
     color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
             
@@ -254,23 +279,27 @@ def lane_mask(img):
     result = cv2.addWeighted(img[:,:,:3], 1, newwarp, 0.3, 0)
     return result
 
-"""
-files = glob.glob('./test_images/test_dst*.jpg')
+rightLine = Line()
+leftLine = Line()
+
+
+files = glob.glob('./test_images/challenge/test_images*.jpg')
 for file in files:
     img = cv2.imread(file)
     res = lane_mask(img)
     out = './test_images/output_'+file.split('\\')[1].split('.')[0]+'.jpg'
     cv2.imwrite(out, res)
-
 """
 from moviepy.editor import VideoFileClip
 
-white_output = './output_video/project_video.mp4'
+white_output = './output_video/challenge_video.mp4'
 ## To speed up the testing process you may want to try your pipeline on a shorter subclip of the video
 ## To do so add .subclip(start_second,end_second) to the end of the line below
 ## Where start_second and end_second are integer values representing the start and end of the subclip
 ## You may also uncomment the following line for a subclip of the first 5 seconds
-## clip1 = VideoFileClip("test_videos/solidWhiteRight.mp4").subclip(0,5)
-clip1 = VideoFileClip('./project_video.mp4')
+clip1 = VideoFileClip('./challenge_video.mp4').subclip(0,5)
+#clip1 = VideoFileClip('./challenge_video.mp4')
 white_clip = clip1.fl_image(lane_mask) #NOTE: this function expects color images!!
 white_clip.write_videofile(white_output, audio=False) 
+
+"""
