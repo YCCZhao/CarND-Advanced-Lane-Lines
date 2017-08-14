@@ -119,7 +119,7 @@ def edge_detection(img):
     
     hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
     h,l,s = hls[:,:,0],hls[:,:,1],hls[:,:,2]
-    
+
     l_binary = np.zeros_like(l)
     l_binary[(l > l_threshold)] = 1
     
@@ -140,24 +140,24 @@ def edge_detection(img):
     
     combined = np.zeros_like(s)
     combined[((combined1==1)|(combined2==1))&(area_interest == 1)] = 1
-    
+
     return combined
 
 class Line():
     def __init__(self):
-        self.n = 5
-        self.min_points = 500
+        self.min_points = 1500
         #polynomial coefficients for the most recent fit
         self.current_fit = None
         self.current_x = None  
         self.current_y = None  
         #difference in fit coefficients between last and new fits
-        self.diffs = np.array([0,0,0], dtype='float') 
         #Last n fits of the line
         self.recent_fitted = []
         self.good_fitted = []
         #polynomial coefficients averaged over the last n iterations
         self.best_fit = None
+        self.std = None
+        self.diff = None
         # was the line detected in the last iteration?
         self.detected = False  
         #radius of curvature of the line in some units
@@ -171,18 +171,22 @@ class Line():
         else:
             self.current_fit = None   
             
+    def append_fit(self):
+        try:
+            self.diff = ((self.current_fit - self.best_fit)/self.best_fit)#/self.std
+        except:
+            self.diff = None
+        #if self.diff is not None and len(self.recent_fitted) > 10 and (abs(self.diff[0]) > 20 and abs(self.diff[1]) > 5 and abs(self.diff[2]) > 0.2):
+        #    self.current_fit = None
         self.recent_fitted.append(self.current_fit)
-        self.set_best_fit()
-    def set_best_fit(self):
-        if len(self.recent_fitted) < self.n:
-            self.recent_fitted.append(self.current_fit)
-            if self.current_fit is not None:
-                self.good_fitted.append(self.current_fit)
-        else:
-            self.recent_fitted[1:].append(self.current_fit)
-            if self.current_fit is not None:
-                self.good_fitted[1:].append(self.current_fit)
-        self.best_fit = np.mean(np.array(self.good_fitted), axis=0)
+        #else:
+            #self.recent_fitted.append(None)
+    
+    def set_best_fit(self, last_from=30):
+        last_from = -1*last_from
+        temp = [x for x in self.recent_fitted[last_from:] if x is not None]
+        self.best_fit = np.mean(np.array(temp), axis=0)
+        self.std = np.std(np.array(temp), axis=0) / self.best_fit
 
 
             
@@ -202,7 +206,9 @@ def lane_mask(img,dist=dist,mtx=mtx):
     
     img = undistortion(dist, mtx, img)
     edges = edge_detection(img)
+    #plt.imshow(edges,cmap='gray')
     binary_warped = perspective_trans(edges)
+    #plt.imshow(binary_warped,cmap='gray')
     nonzero = binary_warped.nonzero()
     nonzeroy = np.array(nonzero[0])
     nonzerox = np.array(nonzero[1])
@@ -222,19 +228,20 @@ def lane_mask(img,dist=dist,mtx=mtx):
     left_lane_inds = []
     right_lane_inds = []
     
-    if (rightLine.current_fit is None) or (leftLine.current_fit is None):
+    if (rightLine.best_fit is None) or (leftLine.best_fit is None):
         histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
     
-    if (rightLine.current_fit is not None):
-        right_lane_inds = ((nonzerox > (rightLine.current_fit[0]*(nonzeroy**2) + rightLine.current_fit[1]*nonzeroy + rightLine.current_fit[2] - margin)) \
-                           & (nonzerox < (rightLine.current_fit[0]*(nonzeroy**2) + rightLine.current_fit[1]*nonzeroy + rightLine.current_fit[2] + margin)))  
+    if (rightLine.best_fit is not None):
+        right_lane_inds = ((nonzerox > (rightLine.best_fit[0]*(nonzeroy**2) + rightLine.best_fit[1]*nonzeroy + rightLine.best_fit[2] - margin)) \
+                           & (nonzerox < (rightLine.best_fit[0]*(nonzeroy**2) + rightLine.best_fit[1]*nonzeroy + rightLine.best_fit[2] + margin)))  
+    
     else:
         rightx_base = np.argmax(histogram[midpoint:]) + midpoint
         right_lane_inds = slide_windows(rightx_base, right_lane_inds)
 
-    if (leftLine.current_fit is not None): 
-        left_lane_inds = ((nonzerox > (leftLine.current_fit[0]*(nonzeroy**2) + leftLine.current_fit[1]*nonzeroy + leftLine.current_fit[2] - margin)) \
-                          & (nonzerox < (leftLine.current_fit[0]*(nonzeroy**2) + leftLine.current_fit[1]*nonzeroy + leftLine.current_fit[2] + margin))) 
+    if (leftLine.best_fit is not None): 
+        left_lane_inds = ((nonzerox > (leftLine.best_fit[0]*(nonzeroy**2) + leftLine.best_fit[1]*nonzeroy + leftLine.best_fit[2] - margin)) \
+                          & (nonzerox < (leftLine.best_fit[0]*(nonzeroy**2) + leftLine.best_fit[1]*nonzeroy + leftLine.best_fit[2] + margin))) 
     else: 
         leftx_base = np.argmax(histogram[:midpoint])
         left_lane_inds = slide_windows(leftx_base, left_lane_inds)
@@ -244,24 +251,55 @@ def lane_mask(img,dist=dist,mtx=mtx):
     leftLine.current_y = nonzeroy[left_lane_inds] 
     rightLine.current_x = nonzerox[right_lane_inds]
     rightLine.current_y = nonzeroy[right_lane_inds] 
+    
     # Fit a second order polynomial to each
     leftLine.set_current_poly_fit()
     rightLine.set_current_poly_fit()
 
+
+
     if leftLine.current_fit is None and rightLine.current_fit is not None:
-        leftLine.current_fit = rightLine.current_fit
-        leftLine.current_fit[2] -= 800
+        leftLine.current_fit = np.copy(rightLine.current_fit)
+        leftLine.current_fit[2] -= 700
     if rightLine.current_fit is None and leftLine.current_fit is not None:
-        rightLine.current_fit = leftLine.current_fit
-        rightLine.current_fit[2] += 800
+        rightLine.current_fit = np.copy(leftLine.current_fit)
+        rightLine.current_fit[2] += 700
         
-    leftLine.set_best_fit()
-    rightLine.set_best_fit()       
+    leftLine.append_fit()
+    rightLine.append_fit()
+    leftLine.set_best_fit(30)
+    rightLine.set_best_fit(30)       
+    
+    
        
+    #print(leftLine.best_fit)
+    #print('fit',rightLine.best_fit)
+    print('diff',rightLine.diff)
+    print('diff',leftLine.diff)
+    #print(rightLine.best_fit[2]-leftLine.best_fit[2])
+    #print('left', leftLine.std)
+    #print('std',rightLine.std)
     ploty = np.linspace(0, binary_warped.shape[0]-1, binary_warped.shape[0] )
+    y_eval = np.max(ploty)   
+    left_curverad = ((1 + (2*leftLine.best_fit[0]*y_eval + leftLine.best_fit[1])**2)**1.5) / np.absolute(2*leftLine.best_fit[0])
+    right_curverad = ((1 + (2*rightLine.best_fit[0]*y_eval + rightLine.best_fit[1])**2)**1.5) / np.absolute(2*rightLine.best_fit[0])
+    
+    if left_curverad/right_curverad > 3 or left_curverad/right_curverad < 1/3:
+        if leftLine.std[2] > 0.1:
+            del leftLine.recent_fitted[-10:]
+            leftLine.set_best_fit
+        if rightLine.std[2] > 0.1:
+            del rightLine.recent_fitted[-10:]
+            rightLine.set_best_fit
+            
+    
+            
+    
     left_fitx = leftLine.best_fit[0]*ploty**2 + leftLine.best_fit[1]*ploty + leftLine.best_fit[2]
     right_fitx = rightLine.best_fit[0]*ploty**2 + rightLine.best_fit[1]*ploty + rightLine.best_fit[2]
-       
+
+    #print(right_fitx[720//2]-left_fitx[720//2])
+    
     warp_zero = np.zeros_like(binary_warped).astype(np.uint8)
     color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
             
@@ -282,24 +320,23 @@ def lane_mask(img,dist=dist,mtx=mtx):
 rightLine = Line()
 leftLine = Line()
 
-
-files = glob.glob('./test_images/challenge/test_images*.jpg')
+"""
+files = glob.glob('../advanced_lane_finding/images/challenge/original/*.jpg')
 for file in files:
     img = cv2.imread(file)
     res = lane_mask(img)
-    out = './test_images/output_'+file.split('\\')[1].split('.')[0]+'.jpg'
+    out = '../advanced_lane_finding/images/challenge/output/'+file.split('\\')[1].split('.')[0]+'.jpg'
     cv2.imwrite(out, res)
 """
 from moviepy.editor import VideoFileClip
 
-white_output = './output_video/challenge_video.mp4'
+output = './output_video/project_video.mp4'
 ## To speed up the testing process you may want to try your pipeline on a shorter subclip of the video
 ## To do so add .subclip(start_second,end_second) to the end of the line below
 ## Where start_second and end_second are integer values representing the start and end of the subclip
 ## You may also uncomment the following line for a subclip of the first 5 seconds
-clip1 = VideoFileClip('./challenge_video.mp4').subclip(0,5)
-#clip1 = VideoFileClip('./challenge_video.mp4')
+#clip1 = VideoFileClip('./challenge_video.mp4').subclip(0,5)
+clip1 = VideoFileClip('./project_video.mp4')
 white_clip = clip1.fl_image(lane_mask) #NOTE: this function expects color images!!
-white_clip.write_videofile(white_output, audio=False) 
+white_clip.write_videofile(output, audio=False) 
 
-"""

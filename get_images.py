@@ -5,7 +5,12 @@ Created on Sun Aug  6 20:29:26 2017
 @author: Yunshi_Zhao
 """
 
-
+import pickle
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+import glob
 vidcap = cv2.VideoCapture('./challenge_video.mp4')
 framerate = int(vidcap.get(cv2.CAP_PROP_FPS))
 framecount = 0
@@ -14,7 +19,7 @@ while vidcap.isOpened():
     success, image = vidcap.read()
     if success:
         #if framecount % framerate == 0:
-        cv2.imwrite('./output_video/test_images_'+str(framecount)+'.jpg', image)
+        cv2.imwrite('../advanced_lane_finding/images/challenge/original/output_'+str(framecount).zfill(3)+'.jpg', image)
         framecount += 1
     else:
         break
