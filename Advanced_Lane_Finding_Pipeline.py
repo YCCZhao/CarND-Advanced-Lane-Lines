@@ -365,7 +365,11 @@ def main(input_video='./challenge_video.mp4', output_video='./output_video/chall
 
 
 if __name__ == '__main__':
-  arg = sys.argv[1:]
-  main(arg[1], arg[2])
+    arg = sys.argv[1:]
+    if len(arg) == 3:
+        main(arg[1], arg[2])
+    else:
+        main()
+
 
 
