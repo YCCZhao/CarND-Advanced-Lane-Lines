@@ -29,7 +29,7 @@ def undistortion(dist, mtx, img):
 # to bird-eye view by using default paramemter.
 def perspective_trans(img, unwarped=False, 
                       ori=[[560,475],[725,475],[245,700],[1080,700]], 
-                      birdeye=[[350,100],[950,100],[350,720],[950,720]]):
+                      birdeye=[[350,0],[950,0],[350,720],[950,720]]):
     
     img_size = (1280, 720)
     src = np.float32(ori)
@@ -101,7 +101,7 @@ def edge_detection(img):
     area_interest = np.concatenate((region1,region2,region3), axis=0)
     """
     # thresholds values
-    l_threshold = 100
+    l_threshold = 200
     s_thresh_min = 100
     s_thresh_max = 255
     
@@ -132,13 +132,25 @@ def edge_detection(img):
     combined = np.zeros_like(s)
     combined[((combined1==1)|(combined2==1))] = 1
 
+    #defining a blank mask to start with
+    mask = np.zeros_like(combined)   
+    ignore_mask_color = 1
+    vertices =np.array([[(0,combined.shape[0]),
+                          (combined.shape[1]//2, 475), 
+                          (combined.shape[1],combined.shape[0])]], 
+                       dtype=np.int32)
+    #filling pixels inside the polygon defined by "vertices" with the fill color    
+    cv2.fillPoly(mask, vertices, ignore_mask_color)
+    
+    #returning the image only where mask pixels are nonzero
     return combined
+
 
 
 # class object to keep track of lane line properties.
 class Line():
     
-    def __init__(self, ym_per_pix=3/70, xm_per_pix=3.7/650, min_points=2000, smooth_factor=10):
+    def __init__(self, ym_per_pix=3/70, xm_per_pix=3.7/650, min_points=1500, smooth_factor=10):
         self.ym_per_pix = ym_per_pix 
         self.xm_per_pix = xm_per_pix
         self.min_points = min_points
@@ -166,6 +178,7 @@ class Line():
         if len(self.current_x) >= self.min_points:
             self.current_fit = np.polyfit(self.current_y, self.current_x, 2)
             self.current_fit_m = np.polyfit(self.current_y*self.ym_per_pix, self.current_x*self.xm_per_pix, 2)
+            
         else:
             self.current_fit = None
             self.current_fit_m = None
@@ -174,7 +187,7 @@ class Line():
     def append_fit(self):
         # calcuate difference between fit of current frame and average fit of last n frames
         try:
-            self.diff = np.array(np.absolute(self.current_fit_m - self.best_fit_m)/self.best_fit_m)
+            self.diff = np.array(np.absolute((self.current_fit_m - self.best_fit_m)/self.best_fit_m))
         except:
             self.diff = None
 
@@ -197,7 +210,7 @@ class Line():
 # This function find lane line by identifying x location of maximum edge points, 
 # then sliding search windows along y direction to collect line points.
 # This function is called by lane_line_fit().
-def slide_windows(x_base, nonzerox, nonzeroy, lane_inds=[], minpix=50, margin=100, img_size=(720,1200), nwindows=9):
+def slide_windows(x_base, nonzerox, nonzeroy, lane_inds, minpix=100, margin=100, img_size=(720,1200), nwindows=9):
     
     window_height = np.int(img_size[0]//nwindows)
     x_current = x_base
@@ -217,7 +230,7 @@ def slide_windows(x_base, nonzerox, nonzeroy, lane_inds=[], minpix=50, margin=10
 # This function decides explicitly which pixels are part of the lines
 # and which belong to the left line and which belong to the right line.
 # Then it uses these sets of point to fit a Polynomial each side.
-def lane_line_fit(binary_warped, margin=100, max_diff=np.array([10.0,10.0,10.0])):  
+def lane_line_fit(binary_warped, margin=50, max_diff=np.array([10.0,10.0,10.0])):  
     
     # find the points associated with lane lines, and put x and y location in two arrays
     nonzero = binary_warped.nonzero()
@@ -256,30 +269,36 @@ def lane_line_fit(binary_warped, margin=100, max_diff=np.array([10.0,10.0,10.0])
     leftLine.set_current_poly_fit(nonzerox[left_lane_inds], nonzeroy[left_lane_inds])
     rightLine.set_current_poly_fit(nonzerox[right_lane_inds], nonzeroy[right_lane_inds] )
 
-    #print('l', leftLine.diff, 'r', rightLine.diff)
+    #print('\n','l', leftLine.diff, 'r', rightLine.diff)
     
     # if current fit appares to be a outliner, omit curret fit. 
     # maximum difference between current fit and average fit over last few iteration
     # can be specified as an input of this function
     if leftLine.diff is not None and (leftLine.diff > max_diff).any():
-        #print("l",leftLine.diff)
-        leftLine.current_fit = None
-    
+        left_lane_inds = []
+        histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
+        leftx_base = np.argmax(histogram[:midpoint])
+        left_lane_inds = slide_windows(leftx_base, nonzerox, nonzeroy, left_lane_inds)
+        leftLine.set_current_poly_fit(nonzerox[left_lane_inds], nonzeroy[left_lane_inds])
+        
     if rightLine.diff is not None and (rightLine.diff > max_diff).any():
-        #print("r",rightLine.diff)
-        rightLine.curent_fit = None
+        right_lane_inds = []
+        histogram = np.sum(binary_warped[binary_warped.shape[0]//2:,:], axis=0)
+        rightx_base = np.argmax(histogram[midpoint:]) + midpoint
+        right_lane_inds = slide_windows(rightx_base, nonzerox, nonzeroy, right_lane_inds)
+        rightLine.set_current_poly_fit(nonzerox[right_lane_inds], nonzeroy[right_lane_inds] )
 
     # if either side does not have a fit for current frame, use the fit of the other side
     # to derive current fit
     if leftLine.current_fit is None and rightLine.current_fit is not None:
         leftLine.current_fit = np.copy(rightLine.current_fit)
         leftLine.current_fit_m = np.copy(rightLine.current_fit_m)
-        leftLine.current_fit[2] -= 650
+        leftLine.current_fit[2] -= 520
         leftLine.current_fit_m[2] -= 3.7      
     if rightLine.current_fit is None and leftLine.current_fit is not None:
         rightLine.current_fit = np.copy(leftLine.current_fit)
         rightLine.current_fit_m = np.copy(leftLine.current_fit_m)
-        rightLine.current_fit[2] += 650
+        rightLine.current_fit[2] += 520
         rightLine.current_fit_m[2] += 3.7
     
     # append current fit to fit history
@@ -295,15 +314,15 @@ def lane_line_fit(binary_warped, margin=100, max_diff=np.array([10.0,10.0,10.0])
     rightLine.set_curvature()
     curverad = (leftLine.radius_of_curvature+rightLine.radius_of_curvature)/2
     # if two curvature are very different, remove the side with a very small curvature.
-    print('\n',leftLine.radius_of_curvature, 'm', rightLine.radius_of_curvature, 'm')    
+    #print('\n',leftLine.radius_of_curvature, 'm', rightLine.radius_of_curvature, 'm')    
     if (leftLine.radius_of_curvature/rightLine.radius_of_curvature > 10 or leftLine.radius_of_curvature/rightLine.radius_of_curvature < 1/10) and len(leftLine.recent_fitted) > 10:
         if leftLine.radius_of_curvature < 100:
-            del leftLine.recent_fitted[-1]
-            del leftLine.recent_fitted_m[-1]
+            leftLine.recent_fitted[-1] = None
+            leftLine.recent_fitted_m[-1] = None
             leftLine.set_best_fit()
         if rightLine.radius_of_curvature < 100:
-            del rightLine.recent_fitted[-1]
-            del rightLine.recent_fitted_m[-1]
+            rightLine.recent_fitted[-1] = None
+            rightLine.recent_fitted_m[-1] = None
             rightLine.set_best_fit()  
 
     # generate x and y location of points to use to draw the polynomial fits on the input image
@@ -351,7 +370,9 @@ mtx = dist_pickle['mtx']
 def pipeline(img,dist=dist,mtx=mtx):  
     img = undistortion(dist, mtx, img)
     edges = edge_detection(img)
+    #plt.imshow(edges,cmap='gray')
     binary_warped = perspective_trans(edges)
+    #plt.imshow(binary_warped,cmap='gray')
     color_warp, curverad, center_diff, side_pos = lane_line_fit(binary_warped)
     newwarp = perspective_trans(color_warp, unwarped=True) 
     result = cv2.addWeighted(img[:,:,:3], 1, newwarp, 0.3, 0)
@@ -359,13 +380,13 @@ def pipeline(img,dist=dist,mtx=mtx):
                 (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255),2)
     cv2.putText(result, 'Vehicle is '+str(abs(round(center_diff,3)))+'(m) '+side_pos+' of center',
                 (50,100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255),2)
-    return result
+    return result#binary_warped*255
  
     
 def main(input_video='./project_video.mp4', output_video='./output_video/project_video.mp4'):  
-    """
-    following code can be used to test on individual picture.
-    files = glob.glob('../advanced_lane_finding/images/challenge/original/*.jpg')
+    """   
+    #following code can be used to test on individual picture.
+    files = glob.glob('../advanced_lane_finding/images/challenge/original/*166.jpg')
     for file in files:
         img = cv2.imread(file)
         res = pipeline(img)
@@ -375,7 +396,7 @@ def main(input_video='./project_video.mp4', output_video='./output_video/project
     clip = VideoFileClip(input_video)
     output_clip = clip.fl_image(pipeline) 
     output_clip.write_videofile(output_video, audio=False) 
-
+ 
 
 if __name__ == '__main__':
     arg = sys.argv[1:]
