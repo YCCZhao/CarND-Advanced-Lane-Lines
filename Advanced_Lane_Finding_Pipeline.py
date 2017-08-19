@@ -28,8 +28,8 @@ def undistortion(dist, mtx, img):
 # This function performs a perspective transform. It transforms frontview
 # to bird-eye view by using default paramemter.
 def perspective_trans(img, unwarped=False, 
-                      ori=[[566,490],[760,490],[220,700],[1070,700]], 
-                      birdeye=[[200,100],[1000,100],[200,700],[1000,700]]):
+                      ori=[[595,450],[688,450],[245,700],[1080,700]], 
+                      birdeye=[[350,100],[950,100],[350,720],[950,720]]):
     
     img_size = (1280, 720)
     src = np.float32(ori)
@@ -101,7 +101,7 @@ def edge_detection(img):
     area_interest = np.concatenate((region1,region2,region3), axis=0)
     """
     # thresholds values
-    l_threshold = 200
+    l_threshold = 100
     s_thresh_min = 100
     s_thresh_max = 255
     
@@ -119,6 +119,7 @@ def edge_detection(img):
     
     # calculate pixel gradients in s layer of the HLS color space to find the edges of the image, 
     # locates lane line by using gradient thresholds.
+    
     ksize = 9
     gradx = abs_sobel_thresh(s, orient='x', sobel_kernel=ksize, thresh=(10, 255))
     grady = abs_sobel_thresh(s, orient='y', sobel_kernel=ksize, thresh=(10, 255))  
@@ -137,7 +138,7 @@ def edge_detection(img):
 # class object to keep track of lane line properties.
 class Line():
     
-    def __init__(self, ym_per_pix=3/70, xm_per_pix=3.7/790, min_points=2000, smooth_factor=30):
+    def __init__(self, ym_per_pix=3/70, xm_per_pix=3.7/790, min_points=2000, smooth_factor=10):
         self.ym_per_pix = ym_per_pix 
         self.xm_per_pix = xm_per_pix
         self.min_points = min_points
@@ -216,7 +217,8 @@ def slide_windows(x_base, nonzerox, nonzeroy, lane_inds=[], minpix=50, margin=10
 # This function decides explicitly which pixels are part of the lines
 # and which belong to the left line and which belong to the right line.
 # Then it uses these sets of point to fit a Polynomial each side.
-def lane_line_fit(binary_warped, margin=100, max_diff=np.array([2.0, 5.0, 1.0 ])):  
+def lane_line_fit(binary_warped, margin=100, max_diff=np.array([10.0,10.0,10.0])):  
+    
     # find the points associated with lane lines, and put x and y location in two arrays
     nonzero = binary_warped.nonzero()
     nonzeroy = np.array(nonzero[0])
@@ -291,15 +293,15 @@ def lane_line_fit(binary_warped, margin=100, max_diff=np.array([2.0, 5.0, 1.0 ])
     # calculate curvature in 'm'
     leftLine.set_curvature()
     rightLine.set_curvature()
-    
+    curverad = (leftLine.radius_of_curvature+rightLine.radius_of_curvature)/2
     # if two curvature are very different, remove the side with a very small curvature.
-    if (leftLine.radius_of_curvature/rightLine.radius_of_curvature > 20 or leftLine.radius_of_curvature/rightLine.radius_of_curvature < 1/20) and len(leftLine.recent_fitted) > 30:
+    if (leftLine.radius_of_curvature/rightLine.radius_of_curvature > 10 or leftLine.radius_of_curvature/rightLine.radius_of_curvature < 1/20) and len(leftLine.recent_fitted) > 10:
         #print(leftLine.radius_of_curvature, 'm', rightLine.radius_of_curvature, 'm')    
-        if leftLine.radius_of_curvature < 500:
+        if leftLine.radius_of_curvature < 100:
             del leftLine.recent_fitted[-1]
             del leftLine.recent_fitted_m[-1]
             leftLine.set_best_fit()
-        if rightLine.radius_of_curvature < 500:
+        if rightLine.radius_of_curvature < 100:
             del rightLine.recent_fitted[-1]
             del rightLine.recent_fitted_m[-1]
             rightLine.set_best_fit()  
@@ -308,11 +310,18 @@ def lane_line_fit(binary_warped, margin=100, max_diff=np.array([2.0, 5.0, 1.0 ])
     ploty = np.linspace(0, binary_warped.shape[0]-1, binary_warped.shape[0] )
     left_fitx = leftLine.best_fit[0]*ploty**2 + leftLine.best_fit[1]*ploty + leftLine.best_fit[2]
     right_fitx = rightLine.best_fit[0]*ploty**2 + rightLine.best_fit[1]*ploty + rightLine.best_fit[2]
-   
+    
     # create an image to draw on and an image to show the selection window
     warp_zero = np.zeros_like(binary_warped).astype(np.uint8)
     color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
-            
+     
+    # calculate the offest of the car on the road
+    camera_center = (left_fitx[-1] + right_fitx[-1])//2
+    center_diff = (camera_center-color_warp.shape[1]//2)*leftLine.xm_per_pix
+    side_pos = 'left'
+    if center_diff <= 0:
+        side_pos = 'right'
+    
     # recast the x and y points into usable format for cv2.fillPoly()
     pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
     pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
@@ -320,7 +329,7 @@ def lane_line_fit(binary_warped, margin=100, max_diff=np.array([2.0, 5.0, 1.0 ])
     
     # draw the lane onto the warped blank image
     cv2.fillPoly(color_warp, np.int_([pts]), (0,255, 0))
-    return color_warp
+    return color_warp, curverad, center_diff, side_pos
 
 # initiate class object for the left and the right lines
 rightLine = Line()
@@ -343,13 +352,17 @@ def pipeline(img,dist=dist,mtx=mtx):
     img = undistortion(dist, mtx, img)
     edges = edge_detection(img)
     binary_warped = perspective_trans(edges)
-    color_warp = lane_line_fit(binary_warped)
+    color_warp, curverad, center_diff, side_pos = lane_line_fit(binary_warped)
     newwarp = perspective_trans(color_warp, unwarped=True) 
     result = cv2.addWeighted(img[:,:,:3], 1, newwarp, 0.3, 0)
+    cv2.putText(result, 'Raidus of Curvature = '+str(round(curverad,3))+'(m)',
+                (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255),2)
+    cv2.putText(result, 'Vehicle is '+str(abs(round(center_diff,3)))+'(m) '+side_pos+' of center',
+                (50,100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255),2)
     return result
  
     
-def main(input_video='./challenge_video.mp4', output_video='./output_video/challenge_video.mp4'):  
+def main(input_video='./project_video.mp4', output_video='./output_video/project_video.mp4'):  
     """
     following code can be used to test on individual picture.
     files = glob.glob('../advanced_lane_finding/images/challenge/original/*.jpg')
