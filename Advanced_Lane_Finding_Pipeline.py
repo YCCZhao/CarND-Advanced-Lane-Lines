@@ -28,7 +28,7 @@ def undistortion(dist, mtx, img):
 # This function performs a perspective transform. It transforms frontview
 # to bird-eye view by using default paramemter.
 def perspective_trans(img, unwarped=False, 
-                      ori=[[595,450],[688,450],[245,700],[1080,700]], 
+                      ori=[[560,475],[725,475],[245,700],[1080,700]], 
                       birdeye=[[350,100],[950,100],[350,720],[950,720]]):
     
     img_size = (1280, 720)
@@ -138,7 +138,7 @@ def edge_detection(img):
 # class object to keep track of lane line properties.
 class Line():
     
-    def __init__(self, ym_per_pix=3/70, xm_per_pix=3.7/790, min_points=2000, smooth_factor=10):
+    def __init__(self, ym_per_pix=3/70, xm_per_pix=3.7/650, min_points=2000, smooth_factor=10):
         self.ym_per_pix = ym_per_pix 
         self.xm_per_pix = xm_per_pix
         self.min_points = min_points
@@ -295,8 +295,8 @@ def lane_line_fit(binary_warped, margin=100, max_diff=np.array([10.0,10.0,10.0])
     rightLine.set_curvature()
     curverad = (leftLine.radius_of_curvature+rightLine.radius_of_curvature)/2
     # if two curvature are very different, remove the side with a very small curvature.
-    if (leftLine.radius_of_curvature/rightLine.radius_of_curvature > 10 or leftLine.radius_of_curvature/rightLine.radius_of_curvature < 1/20) and len(leftLine.recent_fitted) > 10:
-        #print(leftLine.radius_of_curvature, 'm', rightLine.radius_of_curvature, 'm')    
+    print('\n',leftLine.radius_of_curvature, 'm', rightLine.radius_of_curvature, 'm')    
+    if (leftLine.radius_of_curvature/rightLine.radius_of_curvature > 10 or leftLine.radius_of_curvature/rightLine.radius_of_curvature < 1/10) and len(leftLine.recent_fitted) > 10:
         if leftLine.radius_of_curvature < 100:
             del leftLine.recent_fitted[-1]
             del leftLine.recent_fitted_m[-1]
