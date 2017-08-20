@@ -28,12 +28,12 @@ def undistortion(dist, mtx, img):
 # This function performs a perspective transform. It transforms frontview
 # to bird-eye view by using default paramemter.
 def perspective_trans(img, unwarped=False, 
-                      ori=[[560,475],[725,475],[245,700],[1080,700]], 
-                      birdeye=[[350,0],[950,0],[350,720],[950,720]]):
+                      src=[[560,475],[725,475],[245,700],[1080,700]], 
+                      dst=[[350,0],[950,0],[350,720],[950,720]]):
     
     img_size = (1280, 720)
-    src = np.float32(ori)
-    dst = np.float32(birdeye)
+    src = np.float32(src)
+    dst = np.float32(dst)
     M = cv2.getPerspectiveTransform(src, dst)   
     if unwarped:
         Minv = np.linalg.inv(M)
