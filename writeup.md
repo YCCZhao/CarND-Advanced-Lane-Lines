@@ -128,8 +128,8 @@ I implemented this step in lines 376 through 383 in my code in `Advanced_Lane_Fi
 
 #### 1. Provide a link to your final video output.  Your pipeline should perform reasonably well on the entire project video (wobbly lines are ok but no catastrophic failures that would cause the car to drive off the road!).
 
-Here's a [link to my project video result](./video_output/project_video.mp4)
-Here's a [link to my challenge video result](./video_output/challenge_video.mp4)
+Here's a [link to my project video result](./output_video/project_video.mp4)
+Here's a [link to my challenge video result](./output_video/challenge_video.mp4)
 ---
 
 ### Discussion
