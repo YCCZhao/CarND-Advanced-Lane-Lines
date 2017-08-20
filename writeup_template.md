@@ -47,24 +47,26 @@ I start by preparing "object points", which will be the (x, y, z) coordinates of
 
 I then used the output `objpoints` and `imgpoints` to compute the camera calibration and distortion coefficients using the `cv2.calibrateCamera()` function.  I applied this distortion correction to the test image using the `cv2.undistort()` function and obtained this result: 
 
-![alt text][image1]
+![][image1] 
 
 ### Pipeline (single images)
 
 #### 1. Provide an example of a distortion-corrected image.
 
-To demonstrate this step, I will describe how I apply the distortion correction to one of the test images like this one:
+Using `cv2.undistort` function and the camera matrix and distance coefficient obtained from camera calibration steps, image is undistorted. A distortion-corrected example image is shown below:
 ![alt text][image2]
 
 #### 2. Describe how (and identify where in your code) you used color transforms, gradients or other methods to create a thresholded binary image.  Provide an example of a binary image result.
 
-I used a combination of color and gradient thresholds to generate a binary image (thresholding steps at lines 95 through 135 in `Advanced_Lane_Finding_Pipeline.py`).  Here's an example of my output for this step.
+I used a combination of color and gradient thresholds to generate a binary image (thresholding steps at lines 95 through 135 in `Advanced_Lane_Finding_Pipeline.py`). I used color threshold to filter all pixels with lightness under 200 and saturation 100 (line 103-118). This is meant to keep the clear lane lines. I also used graient thresholds to find edges (line 123-129). I chose saturation layer of the image to calcuate gradient after testing on different layers.
+
+Here's an example of my output for this step.
 
 ![alt text][image3]
 
 #### 3. Describe how (and identify where in your code) you performed a perspective transform and provide an example of a transformed image.
 
-The code for my perspective transform includes a function called `perspective_trans()`, which appears in lines 30 through 43 in the file `Advanced_Lane_Finding_Pipeline.py` (./Advanced_Lane_Finding_Pipeline.py). The `perspective_trans()` function takes as inputs an image (`img`), as well as source (`src`) and destination (`dst`) points.  I chose the hardcode the source and destination points in the following manner:
+The code for my perspective transform includes a function called `perspective_trans()`, which appears in lines 30 through 43 in the file `Advanced_Lane_Finding_Pipeline.py` (./Advanced_Lane_Finding_Pipeline.py). The `perspective_trans()` function takes as inputs an image (`img`), and has default values for source (`src`) and destination (`dst`) points.  This points works for current camera location, but since different camera orientation is used, they might need to be updated.
 
 ```python
 def perspective_trans(img, unwarped=False, 
@@ -102,17 +104,21 @@ The output of example image at the stage is shown below
 
 #### 4. Describe how (and identify where in your code) you identified lane-line pixels and fit their positions with a polynomial?
 
-Then I did some other stuff and fit my lane lines with a 2nd order polynomial kinda like this:
+So once I had the binary warped image of the example image, I found for the x locations where the lower half the image had the most non-zero pixels, one for the left half of the image, and one for the right half of the image. Then I appended all the non-zero pixels inside the search window at that location. The serach window moved up and updated x location as it moved up. And everytime non-zero pixels within window were appended to a list. If previous fits were available, search windows were started at the previous poly fit instead of the x location with most non-zero pixels.  By using points found (left and right), polynomial fit was performed using `np.poly` function. Once lines were fit, I calcuated the difference between current fit and the average fit over last few iterations, if difference were too big, current fit was removed and the result from previous frame was used. In the case that only one fit was found, the other fit were derived using the fit identified, since lane lines are fairly parallel. When both fits were found, their curvatures were compared. If they are too different, current fit will be removed and the result from previous frame was used. Finally, x and y points of the poly fit were generated for visualization.
+
+The output image at this state looks like this:
 
 ![alt text][image5]
 
 #### 5. Describe how (and identify where in your code) you calculated the radius of curvature of the lane and the position of the vehicle with respect to center.
 
-I did this in lines # through # in my code in `my_other_file.py`
+Right after both lines were fit, the curvature function (line 206 to 207) of the Line Class was called in line 315 to 316 of `Advanced_Lane_Finding_Pipeline.py`
+Calculation of position of the vehicle with respect to center was performed in line 338 through 342 of `Advanced_Lane_Finding_Pipeline.py`. I first found the camera center location, then calcuated the distance between bemera and the lane lines. And that's the position of the vehicle with repect to either side of the lane.
+
 
 #### 6. Provide an example image of your result plotted back down onto the road such that the lane area is identified clearly.
 
-I implemented this step in lines # through # in my code in `yet_another_file.py` in the function `map_lane()`.  Here is an example of my result on a test image:
+I implemented this step in lines 376 through 383 in my code in `Advanced_Lane_Finding_Pipeline.py` in the function `pipeline()`.  Here is an example of my result on a test image:
 
 ![alt text][image7]
 ![alt text][image6]
@@ -130,4 +136,6 @@ Here's a [link to my challenge video result](./video_output/challenge_video.mp4)
 
 #### 1. Briefly discuss any problems / issues you faced in your implementation of this project.  Where will your pipeline likely fail?  What could you do to make it more robust?
 
-Here I'll talk about the approach I took, what techniques I used, what worked and why, where the pipeline might fail and how I might improve it if I were going to pursue this project further.  
+The color and gradient threshold method worked very well when there was enough brightness of a image. However it wasn't doing a great job when the image is very dark - i.e. hardly any pixels associated with lane lines were found when under the shadow of a bridge. If threshold were set low so that lane lines can be found when dark, lots noise would be picked up when bright. Therefore current implementation is not very robust. If I had more time, I would probably look into image equaliztion or other method to maximize image contrast regarding the brightness.
+
+Another issue is curvature varied a lot from frame to frame which still needs some investigation.
